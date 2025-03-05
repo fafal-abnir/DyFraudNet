@@ -1,7 +1,6 @@
+import time
 import torch
-import hydra.utils
-from dataclasses import dataclass
-from torchmetrics.classification import BinaryAveragePrecision,BinaryAUROC
+from torchmetrics.classification import BinaryAveragePrecision, BinaryAUROC
 from torch.nn import BCEWithLogitsLoss
 
 import pytorch_lightning as L
@@ -22,24 +21,31 @@ class LightningGNN(L.LightningModule):
     def reset_loss(self, loss):
         self.loss_fn = loss()
 
-    # def forward(self, x, edge_index, edge_label_index, previous_embeddings=None, num_current_edges=None,
-    #             num_previous_edges=None):
     def forward(self, data):
         x = data.x
         edge_index = data.edge_index
-        pred= self.model(x, edge_index)
-        return pred
+        pred, embeddings = self.model(x, edge_index)
+        return pred, embeddings
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(params=self.parameters(), lr=self.learning_rate, weight_decay=5e-4)
         return optimizer
 
     def _shared_step(self, batch):
-        pred = self.forward(batch)
+        start_time = time.time()
+        pred, _ = self.forward(batch)
         loss = self.loss_fn(pred[batch.node_mask], batch.y[batch.node_mask].type_as(pred))
         pred_cont = torch.sigmoid(pred)
         avg_pr = self.metric_avgpr(pred_cont[batch.node_mask], batch.y[batch.node_mask].int())
         auc_roc = self.metric_auroc(pred_cont[batch.node_mask], batch.y[batch.node_mask].int())
+        elapsed_time = time.time() - start_time
+        self.log("time_sec", elapsed_time, on_step=False, on_epoch=True, prog_bar=True)
+        if torch.cuda.is_available():
+            memory_allocated = torch.cuda.memory_allocated() / 1e6  # MB
+            memory_reserved = torch.cuda.memory_reserved() / 1e6  # MB
+            self.log("gpu_memory_allocated_MB", memory_allocated, prog_bar=True, on_step=False, on_epoch=True)
+            self.log("gpu_memory_reserved_MB", memory_reserved, prog_bar=True, on_step=False, on_epoch=True)
+
         return loss, avg_pr, auc_roc
 
     def training_step(self, batch, batch_idx):
@@ -64,3 +70,8 @@ class LightningGNN(L.LightningModule):
         self.log("test_avg_pr", avg_pr)
         self.log("test_au_roc", auc_roc)
         self.log("test_loss", loss)
+
+    def get_node_embeddings(self, batch):
+        """Extracts node embeddings before and after training."""
+        _, node_embeddings = self.forward(batch)
+        return node_embeddings

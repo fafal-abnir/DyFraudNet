@@ -1,3 +1,4 @@
+import argparse
 import torch
 import copy
 import pytorch_lightning as L
@@ -13,6 +14,20 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 torch.autograd.set_detect_anomaly(True)
 
+def get_args():
+    parser = argparse.ArgumentParser(description="EvolveGNN Training Arguments")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs (default: 10)")
+    parser.add_argument("--learning_rate", type=float, default=0.001, help="learning rate(default:0.001")
+    parser.add_argument("--hidden_conv1", type=int, default=16, help="Size of hidden layers (default: 128)")
+    parser.add_argument("--hidden_conv2", type=int, default=16,
+                        help="Size of memory for evolving weights (default: 128)")
+    parser.add_argument("--gnn_type", type=str, choices=["GIN", "GAT", "GCN"], default="GCN",
+                        help="Type of GNN model: GIN, GAT, or GCN (default: GCN)")
+    return parser.parse_args()
+
+
+lightning_root_dir = "experiments/dyfraudnet/node_level"
+
 ## config
 hidden_conv1 = 16
 hidden_conv2 = 16
@@ -20,7 +35,15 @@ lightning_root_dir = "experiments/roland/node_level"
 
 
 def main():
+    args = get_args()
+    hidden_size = args.hidden_size
+    memory_size = args.memory_size
+    epochs = args.epochs
+    learning_rate = args.learning_rate
+    gnn_type = args.gnn_type
+
     dataset = DGraphFin('data/DGraphFin',force_reload=True)
+    experiment_datetime = datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
     for data_index in range(len(dataset) - 1):
         if data_index == 0:
             num_nodes = dataset.num_nodes
@@ -58,8 +81,7 @@ def main():
             test_data.x = torch.Tensor([[1] for _ in range(test_data.num_nodes)])
 
         model = RolandGNN(snapshot.x.shape[1], hidden_conv1, hidden_conv2, dataset.num_nodes)
-        lightningModule = LightningGNN(model, learning_rate=0.01)
-        experiment_datetime = datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
+        lightningModule = LightningGNN(model, learning_rate=learning_rate)
         experiments_dir = f"{lightning_root_dir}/DGraphFin/{experiment_datetime}/index_{data_index}"
         csv_logger = CSVLogger(experiments_dir, version="")
         print(train_data)
@@ -75,7 +97,7 @@ def main():
                             devices="auto",
                             enable_progress_bar=True,
                             logger=csv_logger,
-                            max_epochs=100
+                            max_epochs=10
                             )
         trainer.fit(lightningModule, train_loader, val_loader)
         trainer.test(lightningModule, test_loader)

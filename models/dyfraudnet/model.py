@@ -40,31 +40,70 @@ class DyFraudNet(nn.Module):
         h = F.dropout(h, p=self.dropout, inplace=True)
         h = self.conv2(h, edge_index)
         h = F.leaky_relu(h, inplace=False)
-        h = F.dropout(h, p=self.dropout, inplace=True)
-        h = self.postprocessing1(h)
+        h_hat = F.dropout(h, p=self.dropout, inplace=True)
+        h = self.postprocessing1(h_hat)
         h = torch.sum(h, dim=-1)
-        return h
+        return h, h_hat
 
+
+import torch
+import torch.nn as nn
+import torch_geometric.nn as pyg_nn
+
+
+#
+#
+# gnn_layer_by_name = {
+#     "GCN": pyg_nn.GCNConv,
+#     "GAT": pyg_nn.GATConv,
+#     "GIN": pyg_nn.GINConv
+# }
 
 class EvolveGNN_O(nn.Module):
-    def __init__(self, in_channels, memory_size, out_channels, gnn_type="GCN"):
+    def __init__(self, in_channels, memory_size, out_channels, gnn_type="GIN", heads=1):
         super().__init__()
-        gnn_layer = gnn_layer_by_name[gnn_type]
-        self.gnn = gnn_layer(in_channels, out_channels)
-        self.gru = nn.GRU(memory_size, memory_size)
-        self.weight_transform = nn.Linear(memory_size, in_channels * out_channels)
-        self.register_buffer("memory_weights", torch.zeros(memory_size))
+
+        self.gnn_type = gnn_type
+        self.heads = heads  # Number of heads for GAT
+
+        if gnn_type == "GAT":
+            self.gnn = pyg_nn.GATConv(in_channels, out_channels // heads, heads=heads)
+        elif gnn_type == "GIN":
+            self.gnn = pyg_nn.GINConv(nn.Sequential(nn.Linear(in_channels, out_channels), nn.ReLU()))
+        else:
+            self.gnn = pyg_nn.GCNConv(in_channels, out_channels)
+
+        self.gru = nn.GRU(memory_size, memory_size)  # memory
+
+        # memory to Weight Transforms
+        if gnn_type == "GAT":
+            self.weight_transform = nn.Linear(memory_size, in_channels * (out_channels // heads) * heads)
+        elif gnn_type == "GIN":
+            self.weight_transform = nn.Linear(memory_size, in_channels * out_channels)
+        else:
+            self.weight_transform = nn.Linear(memory_size, in_channels * out_channels)
+
+        # memory initialization (with batch dimension), work as registry in GPU
+        self.register_buffer("memory_weights", torch.zeros(1, memory_size))
 
     def forward(self, x, edge_index):
-        memory = self.memory_weights.to(x.device).unsqueeze(0)
+        # insuring both data and model are in same device, especially in GPU
+        memory = self.memory_weights.to(x.device)
         update_memory, _ = self.gru(memory)
-        update_memory = update_memory.squeeze(0)
+        update_memory = update_memory.squeeze(0)  # Remove batch dimension
         new_weights = self.weight_transform(update_memory)
-        new_weights = new_weights.view(self.gnn.lin.weight.shape)
+        if self.gnn_type == "GAT":
+            new_weights = new_weights.view(self.heads, self.gnn.in_channels, self.gnn.out_channels)
+            for i in range(self.heads):
+                self.gnn.att_l[i].weight = nn.Parameter(new_weights[i].detach())  # Update GAT attention head weights
+        elif self.gnn_type == "GIN":
+            new_weights = new_weights.view(self.gnn.nn[0].weight.shape)  # Update GIN MLP
+            self.gnn.nn[0].weight = nn.Parameter(new_weights.detach())
+        else:
+            new_weights = new_weights.view(self.gnn.lin.weight.shape)
+            self.gnn.lin.weight = nn.Parameter(new_weights.detach())
 
-        with torch.no_grad():
-            self.gnn.lin.weight.copy_(new_weights)
+        self.memory_weights.copy_(update_memory.detach())
 
-        self.memory_weights.copy_(update_memory)
         out = self.gnn(x, edge_index)
         return out
