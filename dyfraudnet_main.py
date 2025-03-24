@@ -17,14 +17,18 @@ torch.autograd.set_detect_anomaly(True)
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="EvolveGNN Training Arguments")
+    parser = argparse.ArgumentParser(description="DyFraudNetGNN Training Arguments")
+    parser.add_argument("--enable_memory", action="store_true", help="Enable the memory for GNN")
+    parser.add_argument("--fresh_start", action="store_true", help="retraining from scratch on each timestamp")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs (default: 10)")
-    parser.add_argument("--learning_rate", type=float, default=0.01, help="learning rate(default:0.01")
+    parser.add_argument("--learning_rate", type=float, default=0.001, help="learning rate(default:0.01")
     parser.add_argument("--hidden_size", type=int, default=128, help="Size of hidden layers (default: 128)")
     parser.add_argument("--memory_size", type=int, default=128,
                         help="Size of memory for evolving weights (default: 128)")
     parser.add_argument("--gnn_type", type=str, choices=["GIN", "GAT", "GCN"], default="GCN",
                         help="Type of GNN model: GIN, GAT, or GCN (default: GCN)")
+    parser.add_argument("--graph_window_size", type=int, default=1, help="the size of graph window size")
+    parser.add_argument("--num_windows", type=int, default=10, help="Number of windows for running the experiment")
     return parser.parse_args()
 
 
@@ -33,15 +37,21 @@ lightning_root_dir = "experiments/dyfraudnet/node_level"
 
 def main():
     args = get_args()
+    # Model arguments
+    enable_memory = args.enable_memory
+    fresh_start = args.fresh_start
     hidden_size = args.hidden_size
     memory_size = args.memory_size
     epochs = args.epochs
     learning_rate = args.learning_rate
     gnn_type = args.gnn_type
-
+    # Data arguments
+    graph_window_size = args.graph_window_size
+    num_windows = args.num_windows
     model = None
     experiment_datetime = datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
-    dataset = DGraphFin('data/DGraphFin', force_reload=True, num_windows=60)
+    dataset = DGraphFin('data/DGraphFin', force_reload=True, edge_window_size=graph_window_size,
+                        num_windows=num_windows)
     for data_index in range(len(dataset) - 1):
         snapshot = dataset[data_index]
         if snapshot.x is None:
@@ -65,11 +75,11 @@ def main():
         test_data.num = test_data.num_nodes
         if snapshot.x is None:
             test_data.x = torch.Tensor([[1] for _ in range(test_data.num_nodes)])
-        if model is None:
+        if (model is None) or fresh_start:
             model = DyFraudNet(snapshot.x.shape[1], memory_size=memory_size, hidden_size=hidden_size, out_put_size=2,
-                               gnn_type=gnn_type)
+                               gnn_type=gnn_type, enable_memory=enable_memory)
         lightningModule = LightningGNN(model, learning_rate=learning_rate)
-        experiments_dir = f"{lightning_root_dir}/DGraphFin/{experiment_datetime}/index_{data_index}"
+        experiments_dir = f"{lightning_root_dir}/DGraphFin/{graph_window_size}_days/M{enable_memory}_{gnn_type}_F{fresh_start}/{experiment_datetime}/index_{data_index} "
         csv_logger = CSVLogger(experiments_dir, version="")
         csv_logger.log_hyperparams(vars(args))
         print(train_data)

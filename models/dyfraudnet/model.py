@@ -8,18 +8,26 @@ gnn_layer_by_name = {"GCN": geom_nn.GCNConv, "GAT": geom_nn.GATConv, "GraphConv"
 
 
 class DyFraudNet(nn.Module):
-    def __init__(self, input_dim, memory_size=16, hidden_size=16, out_put_size=2, gnn_type="GCN", num_layers=2,
-                 dropout=0.0):
+    def __init__(self, input_dim, memory_size=16, hidden_size=16, out_put_size=2, enable_memory=True, gnn_type="GCN", num_layers=2,
+                 dropout=0.0, heads=1):
         super().__init__()
-        gnn_layer = gnn_layer_by_name[gnn_type]
         self.preprocess1 = Linear(input_dim, 256)
         self.preprocess2 = Linear(256, hidden_size)
-        self.conv1 = EvolveGNN_O(hidden_size, memory_size, hidden_size)
-        self.conv2 = EvolveGNN_O(hidden_size, memory_size, hidden_size)
-        self.postprocessing1 = geom_nn.Linear(hidden_size, 2)
+        if enable_memory:
+            self.conv1 = EvolveGNN_O(hidden_size, memory_size, hidden_size, gnn_type)
+            self.conv2 = EvolveGNN_O(hidden_size, memory_size, hidden_size, gnn_type)
+        else:
+            if gnn_type == "GAT":
+                self.conv1 = pyg_nn.GATConv(hidden_size, hidden_size // heads, heads=heads)
+                self.conv2 = pyg_nn.GATConv(hidden_size, hidden_size // heads, heads=heads)
+            elif gnn_type == "GIN":
+                self.conv1 = pyg_nn.GINConv(nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.ReLU()))
+                self.conv2 = pyg_nn.GINConv(nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.ReLU()))
+            else: #GCN
+                self.conv1 = pyg_nn.GCNConv(hidden_size, hidden_size)
+                self.conv2 = pyg_nn.GCNConv(hidden_size, hidden_size)
+        self.postprocessing1 = geom_nn.Linear(hidden_size, out_put_size)
         self.dropout = dropout
-        # self.memory_weights = [torch.tensor([0.0 for _ in range(memory_size)]),
-        #                        torch.tensor([0.0 for _ in range(memory_size)])]
 
     def reset_parameters(self):
         self.conv1.reset_parameters()
