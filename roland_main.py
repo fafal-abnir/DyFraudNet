@@ -14,8 +14,9 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 torch.autograd.set_detect_anomaly(True)
 
+
 def get_args():
-    parser = argparse.ArgumentParser(description="EvolveGNN Training Arguments")
+    parser = argparse.ArgumentParser(description="Roland Training Arguments")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs (default: 10)")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="learning rate(default:0.001")
     parser.add_argument("--hidden_conv1", type=int, default=16, help="Size of hidden layers (default: 128)")
@@ -23,27 +24,29 @@ def get_args():
                         help="Size of memory for evolving weights (default: 128)")
     parser.add_argument("--gnn_type", type=str, choices=["GIN", "GAT", "GCN"], default="GCN",
                         help="Type of GNN model: GIN, GAT, or GCN (default: GCN)")
+    parser.add_argument("--update_type", type=str, choices=["gru", "mlp", "moving"], default="gru",
+                        help="Type of updating node embeddings: gru, mlp, or moving (default: gru)")
+    parser.add_argument("--graph_window_size", type=int, default=1, help="the size of graph window size")
+    parser.add_argument("--num_windows", type=int, default=10, help="Number of windows for running the experiment")
     return parser.parse_args()
 
 
-lightning_root_dir = "experiments/dyfraudnet/node_level"
-
-## config
-hidden_conv1 = 16
-hidden_conv2 = 16
 lightning_root_dir = "experiments/roland/node_level"
 
 
 def main():
     args = get_args()
-    hidden_size = args.hidden_size
-    memory_size = args.memory_size
+    hidden_conv1 = args.hidden_conv1
+    hidden_conv2 = args.hidden_conv2
     epochs = args.epochs
     learning_rate = args.learning_rate
     gnn_type = args.gnn_type
-
-    dataset = DGraphFin('data/DGraphFin',force_reload=True)
+    update_type = args.update_type
+    graph_window_size = args.graph_window_size
+    num_windows = args.num_windows
     experiment_datetime = datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
+    dataset = DGraphFin('data/DGraphFin', force_reload=True, edge_window_size=graph_window_size,
+                        num_windows=num_windows)
     for data_index in range(len(dataset) - 1):
         if data_index == 0:
             num_nodes = dataset.num_nodes
@@ -80,9 +83,10 @@ def main():
         if snapshot.x is None:
             test_data.x = torch.Tensor([[1] for _ in range(test_data.num_nodes)])
 
-        model = RolandGNN(snapshot.x.shape[1], hidden_conv1, hidden_conv2, dataset.num_nodes)
+        model = RolandGNN(snapshot.x.shape[1], hidden_conv1, hidden_conv2, dataset.num_nodes, gnn_name=gnn_type,
+                          update=update_type)
         lightningModule = LightningGNN(model, learning_rate=learning_rate)
-        experiments_dir = f"{lightning_root_dir}/DGraphFin/{experiment_datetime}/index_{data_index}"
+        experiments_dir = f"{lightning_root_dir}/DGraphFin/{graph_window_size}_days/{gnn_type}_{update_type}_{hidden_conv1}_{hidden_conv2}/{experiment_datetime}/index_{data_index} "
         csv_logger = CSVLogger(experiments_dir, version="")
         print(train_data)
         print(val_data)
@@ -97,7 +101,7 @@ def main():
                             devices="auto",
                             enable_progress_bar=True,
                             logger=csv_logger,
-                            max_epochs=10
+                            max_epochs=epochs
                             )
         trainer.fit(lightningModule, train_loader, val_loader)
         trainer.test(lightningModule, test_loader)

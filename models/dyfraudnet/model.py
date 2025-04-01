@@ -1,10 +1,11 @@
 import torch_geometric.nn as geom_nn
 import torch
 import torch.nn as nn
+import torch_geometric.nn as pyg_nn
 import torch.nn.functional as F
 from torch.nn import Linear, GRU
 
-gnn_layer_by_name = {"GCN": geom_nn.GCNConv, "GAT": geom_nn.GATConv, "GraphConv": geom_nn.GraphConv}
+#gnn_layer_by_name = {"GCN": geom_nn.GCNConv, "GAT": geom_nn.GATConv, "GraphConv": geom_nn.GraphConv}
 
 
 class DyFraudNet(nn.Module):
@@ -53,19 +54,9 @@ class DyFraudNet(nn.Module):
         h = torch.sum(h, dim=-1)
         return h, h_hat
 
-
-import torch
-import torch.nn as nn
-import torch_geometric.nn as pyg_nn
-
-
-#
-#
-# gnn_layer_by_name = {
-#     "GCN": pyg_nn.GCNConv,
-#     "GAT": pyg_nn.GATConv,
-#     "GIN": pyg_nn.GINConv
-# }
+    def get_embedding(self,x, edge_index):
+        _, embeddings = self.forward(x, edge_index)
+        return embeddings
 
 class EvolveGNN_O(nn.Module):
     def __init__(self, in_channels, memory_size, out_channels, gnn_type="GIN", heads=1):

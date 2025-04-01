@@ -9,7 +9,7 @@ from torch_geometric.data import DataLoader
 from models.dyfraudnet.model import DyFraudNet
 from models.dyfraudnet.lightning_modules import LightningGNN
 from datetime import datetime
-from utils.callback import TimeLoggerCallback
+from utils.visualization import visualize_embeddings
 
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
@@ -82,6 +82,7 @@ def main():
         experiments_dir = f"{lightning_root_dir}/DGraphFin/{graph_window_size}_days/M{enable_memory}_{gnn_type}_F{fresh_start}/{experiment_datetime}/index_{data_index} "
         csv_logger = CSVLogger(experiments_dir, version="")
         csv_logger.log_hyperparams(vars(args))
+        print(f"Time Index: {data_index}")
         print(train_data)
         print(val_data)
         print(test_data)
@@ -99,8 +100,42 @@ def main():
                             logger=csv_logger,
                             max_epochs=epochs
                             )
+        # Visualization embedding before training
+        print("start visualization")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+        model.eval()
+        train_data = train_data.to(device)
+        train_labels = train_data.y[train_data.node_mask]
+        train_labels_np = train_labels.cpu().numpy()
+        with torch.no_grad():
+            all_embeddings = model.get_embedding(train_data.x, train_data.edge_index)
+            train_embeddings_np = all_embeddings[train_data.node_mask].cpu().numpy()
+        train_label_colors = ['blue' if label == 0 else 'red' for label in train_labels_np]
+        visualize_embeddings(train_embeddings_np, train_label_colors, 0,
+                             f'{experiments_dir}/train_embeddings_not_trained.png')
+
         trainer.fit(lightningModule, train_loader, val_loader)
         trainer.test(lightningModule, test_loader)
+
+        # Visualization embedding
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+        model.eval()
+        train_data = train_data.to(device)
+        test_data = test_data.to(device)
+        test_labels = test_data.y[test_data.node_mask]
+        test_labels_np = test_labels.cpu().numpy()
+        with torch.no_grad():
+            train_embeddings = model.get_embedding(train_data.x, train_data.edge_index)
+            train_embeddings_np = train_embeddings[train_data.node_mask].cpu().numpy()
+            test_embeddings = model.get_embedding(test_data.x, test_data.edge_index)
+            test_embeddings_np = test_embeddings[test_data.node_mask].cpu().numpy()
+        # train_label_colors = ['blue' if label == 0 else 'red' for label in train_data.y.cpu().numpy()]
+        test_label_colors = ['blue' if label == 0 else 'red' for label in test_labels_np]
+        visualize_embeddings(train_embeddings_np, train_label_colors, epochs,
+                             f'{experiments_dir}/train_embedding_trained.png')
+        visualize_embeddings(test_embeddings_np, test_label_colors, 'None', f'{experiments_dir}/test_embedding.png')
 
 
 if __name__ == "__main__":
